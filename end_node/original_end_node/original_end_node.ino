@@ -5,6 +5,7 @@
 #include "thermistor.h"         //Biblioteca para uso de Thermistors (Sensor de Temperatura)
 #include <Adafruit_ADS1X15.h>   //Biblioteca para o uso do Analogic to Digital Serial (ADS 1115)
 #include "GravityTDS.h"         //Biblioteca para o uso do TDS
+#include "log.hh"               //Biblioteca para o uso do SD
 //End Imports/
 
 //Global Variables
@@ -80,7 +81,7 @@ Adafruit_ADS1115 ads;  /* Use this for the 16-bit version */
 
 
 //TDS Variables
-#define TdsSensorPin 36 //Pino onde está o TDS
+#define TdsSensorPin 12 //Pino onde está o TDS
 GravityTDS gravityTds;  //Variável utilizada pela biblioteca para realizar as medições
 //End TDS Variables
 
@@ -132,6 +133,10 @@ void setup() {
   gravityTds.begin();  //initialization
   gravityTds.setKvalue(1.18);
   //End TDS Setup
+
+
+  //SD Setup
+  log.logInit(dadosINPA.txt);
 }
 
 void loop() {
@@ -147,6 +152,7 @@ void loop() {
   // ACK = false;
   // delay(300000);
   esp_deep_sleep_start();
+  log.logPrintf("%d",outgoing);
 }
 
 void sendMessage(String msg){
@@ -208,6 +214,7 @@ float coleta_temp() {
 float coleta_ph(){
   return -5.70 * ads.computeVolts(ads.readADC_SingleEnded(0)) + valor_calibracao;
 }
+
 
 // String coleta_NTU(){
 //   float ntu = map(ads.computeVolts(ads.readADC_SingleEnded(1)),2.5, 4.2, 3000.0, 0.0);
