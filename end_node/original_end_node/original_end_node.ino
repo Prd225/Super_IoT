@@ -179,16 +179,6 @@ String coleta(){
   return msg;
 }
 
-String coleta_temperatura(){
-  int auxOrig = thermistor.read();
-  int aux = auxOrig;
-  aux = (int)aux/100 * 100;
-  auxOrig = auxOrig - aux;
-  aux /= 100;
-
-  return String(aux) + String(".") + String(auxOrig) + "ºC;";   // Read temperature);
-}
-
 String coleta_PH(){
   float valor_pH = -5.70 * ads.computeVolts(ads.readADC_SingleEnded(0)) + valor_calibracao; //Calcula valor de pH
   valor_pH = aplicar_filtro(valor_pH, "pH");
@@ -206,25 +196,10 @@ String coleta_TDS(){
 
 float coleta_temp() {
     int leitura = thermistor.read();
-    float temp = leitura / 100.0; // Ajuste da leitura
+    float temp = (float)leitura / 100.0; // Ajuste da leitura
     temp = aplicar_filtro(temp, "Temperatura");
     return temp;
 }
-
-float coleta_ph(){
-  return -5.70 * ads.computeVolts(ads.readADC_SingleEnded(0)) + valor_calibracao;
-}
-
-
-// String coleta_NTU(){
-//   float ntu = map(ads.computeVolts(ads.readADC_SingleEnded(1)),2.5, 4.2, 3000.0, 0.0);
-//   return String(ntu) + "ntu;";
-// }
-
-// float map(float x, float in_min, float in_max, float out_min, float out_max){
-//   return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
-// }
-
 
 void onReceive(int packetSize) {
   if (packetSize == 0) return;          // if there's no packet, return
@@ -265,7 +240,6 @@ void onReceive(int packetSize) {
   return;
 }
 
-
 // Função para obter os limites da categoria
 Limite* obter_limites(const char* categoria) {
     for (int i = 0; i < sizeof(outliers) / sizeof(outliers[0]); i++) {
@@ -280,10 +254,10 @@ Limite* obter_limites(const char* categoria) {
 float calcular_media(float* valores, int num_valores) {
     if (num_valores < 2) return valores[num_valores - 1];
     float soma = 0;
-    for (int i = 0; i < num_valores - 1; i++) {
+    for (int i = 0; i < num_valores; i++) {  // alterei para usar todos os valores já coletados
         soma += valores[i];
     }
-    return round(soma / (num_valores - 1) * 100) / 100.0;
+    return round(soma / num_valores * 100) / 100.0;  // média considerando todos os valores
 }
 
 // Função para calcular o desvio padrão
@@ -291,35 +265,59 @@ float calcular_desvio_padrao(float* valores, int num_valores) {
     if (num_valores < 2) return 0;
     float media = calcular_media(valores, num_valores);
     float soma = 0;
-    for (int i = 0; i < num_valores - 1; i++) {
+    for (int i = 0; i < num_valores; i++) {  // alterei para usar todos os valores já coletados
         soma += pow(valores[i] - media, 2);
     }
-    return sqrt(soma / (num_valores - 1));
+    return sqrt(soma / num_valores);  // usando todos os valores para calcular o desvio
 }
 
 // Função para aplicar o filtro e adicionar o valor
 float aplicar_filtro(float novo_valor, const char* categoria) {
     Limite* limites = obter_limites(categoria);
-    if (!limites) return 0;
+    if (!limites) return novo_valor;  // Se não encontrar limites, retorna o valor original
 
     float* valores = strcmp(categoria, "Temperatura") == 0 ? valores_temperatura : valores_ph;
     int* num_valores = strcmp(categoria, "Temperatura") == 0 ? &num_valores_temperatura : &num_valores_ph;
 
-    if (*num_valores >= TAMANHO_MAXIMO) {
-        for (int i = 0; i < TAMANHO_MAXIMO - 1; i++) {
-            valores[i] = valores[i + 1];
+    // Verifica se o primeiro valor é um outlier
+    if (*num_valores == 0) {  
+        if (novo_valor < limites->limite_inferior || novo_valor > limites->limite_superior) {
+            return -1;  // Retorna -1 para indicar que o primeiro valor foi ignorado
         }
-        (*num_valores)--;
     }
 
-    valores[(*num_valores)++] = novo_valor;
-    if (novo_valor < limites->limite_inferior || novo_valor > limites->limite_superior) {
-        return valores[*num_valores - 1] = calcular_media(valores, *num_valores);
+    if (*num_valores >= TAMANHO_MAXIMO) {
+        // Se a janela estiver cheia, desloca os elementos
+        for (int i = 0; i < TAMANHO_MAXIMO - 1; i++) {
+            valores[i] = valores[i + 1];  // Desloca todos os elementos
+        }
+        (*num_valores)--;  // Remove o valor mais antigo
     }
+
+    // Se o valor foi ignorado, não adiciona na janela
+    if (novo_valor == -1) {
+        return valores[(*num_valores) - 1];  // Retorna o último valor válido
+    }
+
+    valores[(*num_valores)++] = novo_valor;  // adiciona o novo valor
+
+    // Calcula a média e o desvio padrão
     float media = calcular_media(valores, *num_valores);
     float desvio_padrao = calcular_desvio_padrao(valores, *num_valores);
-    if (desvio_padrao > 0 && fabs(novo_valor - media) > 3 * desvio_padrao) {
-        return valores[*num_valores - 1] = calcular_media(valores, *num_valores);
+
+    // Verifica se o valor está fora dos limites
+    if (novo_valor < limites->limite_inferior || novo_valor > limites->limite_superior) {
+        return media;  // Retorna a média se o valor for um outlier
     }
-    return round(novo_valor * 100) / 100.0;
+
+    // Verifica se o desvio padrão é maior que 0 e se a diferença do valor da média é maior que 3 desvios padrão
+    if (desvio_padrao > 0 && fabs(novo_valor - media) > 3 * desvio_padrao) {
+        return media;  // Retorna a média se o valor for um outlier (com base no desvio padrão)
+    }
+
+    // Arredondamento seguro para valores negativos ou pequenos
+    if (novo_valor < 0) {
+        return floor(novo_valor * 100) / 100.0;
+    }
+    return round(novo_valor * 100) / 100.0; // arredonda para cima para valores positivos
 }
